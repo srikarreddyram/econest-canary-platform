@@ -23,16 +23,16 @@ pipeline {
             // Clean previous workspace (IMPORTANT)
             deleteDir()
 
-        // Clone the repo passed from frontend
+            // Clone the repo passed from frontend
             git branch: 'main',
             url: "${params.REPO_URL}"
 
-        // Make scripts executable if present
-        sh '''
+            // Make scripts executable if present
+            sh '''
             if [ -f deploy_script.sh ]; then chmod +x deploy_script.sh; fi
             if [ -f verify_db_structure.py ]; then echo "DB script found"; fi
             if [ -f evaluate_risk.py ]; then echo "Risk script found"; fi
-        '''
+            '''
         }
 
         // ── Stage 1: Rollback Gate (emergency path) ──────────────────────────
