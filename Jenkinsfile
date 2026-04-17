@@ -24,6 +24,7 @@ pipeline {
             steps {
                 echo 'Querying MLflow Risk Scoring Engine...'
                 sh '''
+                export MLFLOW_TRACKING_URI=./mlruns
                     python3 evaluate_risk.py
                 '''
             }
