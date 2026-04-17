@@ -18,11 +18,21 @@ pipeline {
 
         // ── Stage 0: Checkout ────────────────────────────────────────────────
         stage('Checkout') {
-            steps {
-                echo "Pulling source from: ${params.REPO_URL}"
-                checkout scm
-                sh 'chmod +x deploy_script.sh'
-            }
+            echo "Pulling source from: ${params.REPO_URL}"
+
+            // Clean previous workspace (IMPORTANT)
+            deleteDir()
+
+        // Clone the repo passed from frontend
+            git branch: 'main',
+            url: "${params.REPO_URL}"
+
+        // Make scripts executable if present
+        sh '''
+            if [ -f deploy_script.sh ]; then chmod +x deploy_script.sh; fi
+            if [ -f verify_db_structure.py ]; then echo "DB script found"; fi
+            if [ -f evaluate_risk.py ]; then echo "Risk script found"; fi
+        '''
         }
 
         // ── Stage 1: Rollback Gate (emergency path) ──────────────────────────
@@ -30,7 +40,7 @@ pipeline {
             when { expression { params.FORCE_ROLLBACK == true } }
             steps {
                 echo '⚠️  FORCE_ROLLBACK flag detected. Executing emergency rollback.'
-                sh './deploy_script.sh 0'
+                sh '/Users/tejsr/Projects/econest-canary-platform/deploy_script.sh 0'
                 error('Rollback complete. Build marked FAILED for audit trail.')
             }
         }
@@ -66,7 +76,7 @@ pipeline {
         stage('Canary 10%') {
             when { expression { params.FORCE_ROLLBACK == false } }
             steps {
-                sh './deploy_script.sh 10'
+                sh '/Users/tejsr/Projects/econest-canary-platform/deploy_script.sh 10'
             }
         }
 
@@ -91,7 +101,7 @@ pipeline {
         stage('Promote 50%') {
             when { expression { params.FORCE_ROLLBACK == false } }
             steps {
-                sh './deploy_script.sh 50'
+                sh '/Users/tejsr/Projects/econest-canary-platform/deploy_script.sh 50'
             }
         }
 
@@ -99,7 +109,7 @@ pipeline {
         stage('Promote 100%') {
             when { expression { params.FORCE_ROLLBACK == false } }
             steps {
-                sh './deploy_script.sh 100'
+                sh '/Users/tejsr/Projects/econest-canary-platform/deploy_script.sh 100'
             }
         }
     }
@@ -108,7 +118,7 @@ pipeline {
     post {
         failure {
             echo '🚨 CRITICAL: Pipeline failure detected. Initiating automatic rollback to 0%.'
-            sh './deploy_script.sh 0'
+            sh '/Users/tejsr/Projects/econest-canary-platform/deploy_script.sh 0'
         }
         success {
             echo '✅ Econest canary deployment completed and validated successfully.'
