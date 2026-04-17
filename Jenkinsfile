@@ -1,31 +1,30 @@
 pipeline {
     agent any
-    
+
     stages {
+
         stage('Verify DB Structure') {
             steps {
-                // Grant execute permissions on Mac
-                sh 'chmod +x deploy_script.sh'
                 echo 'Running pre-flight database checks...'
                 sh '''
-                    source venv/bin/activate
-                    python verify_db_structure.py
+                    chmod +x deploy_script.sh
+                    pip3 install --quiet pandas mlflow scikit-learn 2>/dev/null || true
+                    python3 verify_db_structure.py
                 '''
             }
         }
-        
+
         stage('Canary 10%') {
             steps {
                 sh './deploy_script.sh 10'
             }
         }
-        
+
         stage('Evaluate Risk') {
             steps {
                 echo 'Querying MLflow Risk Scoring Engine...'
                 sh '''
-                    source venv/bin/activate
-                    python evaluate_risk.py
+                    python3 evaluate_risk.py
                 '''
             }
         }
@@ -35,13 +34,14 @@ pipeline {
                 sh './deploy_script.sh 50'
             }
         }
-        
+
         stage('Promote 100%') {
             steps {
                 sh './deploy_script.sh 100'
             }
         }
     }
+
     post {
         failure {
             echo '🚨 CRITICAL: Risk threshold breached! Initiating automatic rollback.'
