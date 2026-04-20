@@ -5,7 +5,7 @@ set -e
 
 TRAFFIC=${1:-0}
 TIMESTAMP=$(date '+%Y-%m-%d %H:%M:%S')
-API_URL="http://127.0.0.1:5000/update"
+API_URL="http://127.0.0.1:5001/api/update"
 
 # ── Function to send updates to dashboard ─────────────────────────────
 send_update() {
