@@ -235,6 +235,14 @@ def console():
     return jsonify({"log": ""})
 
 
+@app.route("/api/update", methods=["POST"])
+def update():
+    """Receive live deployment stage updates from deploy_script.sh"""
+    data = request.get_json(silent=True) or {}
+    print(f"📡 Stage update: {data.get('stage')} → {data.get('message')}")
+    # Could broadcast via WebSocket in production — for now just log
+    return jsonify({"status": "received"})
+    
 # ── Entry ─────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     print("🚀 Econest Canary API running on http://localhost:5001")
