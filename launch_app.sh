@@ -13,7 +13,7 @@ if [ -f "pom.xml" ]; then
     mvn clean package -DskipTests
     JAR_FILE=$(ls target/*.jar | head -n 1)
     if [ -n "$JAR_FILE" ]; then
-        java -jar "$JAR_FILE" --server.port=$PORT &
+        java -jar "$JAR_FILE" --server.port=$PORT >> /tmp/econest_${PORT}.log 2>&1 &
         echo $! > /tmp/econest_${PORT}.pid
     else
         echo "No JAR file found after Maven build"
@@ -28,22 +28,22 @@ elif [ -f "requirements.txt" ]; then
         pip3 install gunicorn --quiet || true
         APP_MODULE=$(grep -l "Flask(__name__)" *.py 2>/dev/null | head -n 1 | sed 's/\.py//')
         APP_MODULE=${APP_MODULE:-app}
-        gunicorn -b 0.0.0.0:$PORT $APP_MODULE:app &
+        gunicorn -b 0.0.0.0:$PORT $APP_MODULE:app >> /tmp/econest_${PORT}.log 2>&1 &
         echo $! > /tmp/econest_${PORT}.pid
     elif grep -iq "fastapi" requirements.txt || grep -iq "uvicorn" requirements.txt; then
         echo "Detected FastAPI application"
         pip3 install uvicorn --quiet || true
         APP_MODULE=$(grep -l "FastAPI()" *.py 2>/dev/null | head -n 1 | sed 's/\.py//')
         APP_MODULE=${APP_MODULE:-main}
-        uvicorn $APP_MODULE:app --host 0.0.0.0 --port $PORT &
+        uvicorn $APP_MODULE:app --host 0.0.0.0 --port $PORT >> /tmp/econest_${PORT}.log 2>&1 &
         echo $! > /tmp/econest_${PORT}.pid
     elif grep -iq "django" requirements.txt; then
         echo "Detected Django application"
-        python3 manage.py runserver 0.0.0.0:$PORT &
+        python3 manage.py runserver 0.0.0.0:$PORT >> /tmp/econest_${PORT}.log 2>&1 &
         echo $! > /tmp/econest_${PORT}.pid
     else
         echo "Unknown Python application"
-        python3 -m http.server $PORT &
+        python3 -m http.server $PORT >> /tmp/econest_${PORT}.log 2>&1 &
         echo $! > /tmp/econest_${PORT}.pid
     fi
 
@@ -53,12 +53,12 @@ elif [ -f "package.json" ]; then
     if grep -q '"build"' package.json; then
         npm run build
     fi
-    PORT=$PORT npm start &
+    PORT=$PORT npm start >> /tmp/econest_${PORT}.log 2>&1 &
     echo $! > /tmp/econest_${PORT}.pid
 
 elif [ -f "index.html" ]; then
     echo "Detected static HTML"
-    python3 -m http.server $PORT &
+    python3 -m http.server $PORT >> /tmp/econest_${PORT}.log 2>&1 &
     echo $! > /tmp/econest_${PORT}.pid
 
 else
@@ -71,7 +71,7 @@ def health():
     return "Econest Canary Fallback OK"
 INNER_EOF
     pip3 install flask gunicorn --quiet || true
-    gunicorn -b 0.0.0.0:$PORT dummy_health:app &
+    gunicorn -b 0.0.0.0:$PORT dummy_health:app >> /tmp/econest_${PORT}.log 2>&1 &
     echo $! > /tmp/econest_${PORT}.pid
 fi
 
