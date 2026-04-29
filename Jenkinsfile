@@ -30,6 +30,7 @@ pipeline {
                 // Ensure scripts exist + are executable
                 sh '''
                 if [ -f deploy_script.sh ]; then chmod +x deploy_script.sh; fi
+                if [ -f launch_app.sh ]; then chmod +x launch_app.sh; fi
                 if [ -f verify_db_structure.py ]; then echo "DB script found"; fi
                 if [ -f evaluate_risk.py ]; then echo "Risk script found"; fi
                 '''
@@ -73,7 +74,51 @@ pipeline {
             }
         }
 
-        // ── Stage 4: Canary 10% ──────────────────────────────────
+        // ── Stage 4: Launch Stable ───────────────────────────────
+        stage('Launch Stable') {
+            when { expression { params.FORCE_ROLLBACK == false } }
+            steps {
+                echo 'Launching stable baseline...'
+                sh '''
+                    rm -rf /tmp/econest_stable_app || true
+                    git clone --depth 1 ${params.REPO_URL} /tmp/econest_stable_app
+                    nohup ./launch_app.sh 8001 /tmp/econest_stable_app > /tmp/econest_stable.log 2>&1 &
+                    sleep 5
+                '''
+            }
+        }
+
+        // ── Stage 5: Launch Proxy ────────────────────────────────
+        stage('Launch Proxy') {
+            when { expression { params.FORCE_ROLLBACK == false } }
+            steps {
+                echo 'Starting traffic proxy...'
+                sh '''
+                    if [ -f /tmp/econest_proxy.pid ]; then
+                        kill -9 $(cat /tmp/econest_proxy.pid) || true
+                    fi
+                    nohup python3 traffic_proxy.py > /tmp/econest_proxy.log 2>&1 &
+                    sleep 2
+                    curl -s http://localhost:9000/__econest/health || true
+                '''
+            }
+        }
+
+        // ── Stage 6: Launch Canary ───────────────────────────────
+        stage('Launch Canary') {
+            when { expression { params.FORCE_ROLLBACK == false } }
+            steps {
+                echo 'Launching canary instance...'
+                sh '''
+                    rm -rf /tmp/econest_canary_app || true
+                    git clone --depth 1 ${params.REPO_URL} /tmp/econest_canary_app
+                    nohup ./launch_app.sh 8002 /tmp/econest_canary_app > /tmp/econest_canary.log 2>&1 &
+                    sleep 5
+                '''
+            }
+        }
+
+        // ── Stage 7: Canary 10% ──────────────────────────────────
         stage('Canary 10%') {
             when { expression { params.FORCE_ROLLBACK == false } }
             steps {
@@ -81,7 +126,7 @@ pipeline {
             }
         }
 
-        // ── Stage 5: Evaluate Risk ───────────────────────────────
+        // ── Stage 8: Evaluate Risk ───────────────────────────────
         stage('Evaluate Risk') {
             when { expression { params.FORCE_ROLLBACK == false } }
             steps {
@@ -98,7 +143,7 @@ pipeline {
             }
         }
 
-        // ── Stage 6: Promote 50% ─────────────────────────────────
+        // ── Stage 9: Promote 50% ─────────────────────────────────
         stage('Promote 50%') {
             when { expression { params.FORCE_ROLLBACK == false } }
             steps {
@@ -106,7 +151,7 @@ pipeline {
             }
         }
 
-        // ── Stage 7: Promote 100% ────────────────────────────────
+        // ── Stage 10: Promote 100% ────────────────────────────────
         stage('Promote 100%') {
             when { expression { params.FORCE_ROLLBACK == false } }
             steps {

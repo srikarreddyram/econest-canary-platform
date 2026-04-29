@@ -27,6 +27,8 @@ echo "  Timestamp : $TIMESTAMP"
 echo "  Target    : ${TRAFFIC}%"
 echo "════════════════════════════════════════════════════════════════"
 echo ""
+echo $TRAFFIC > /tmp/econest_traffic_weight
+
 
 # ── Route logic ──────────────────────────────────────────────────────
 if [ "$TRAFFIC" -eq 0 ]; then
@@ -38,7 +40,9 @@ if [ "$TRAFFIC" -eq 0 ]; then
 
     send_update "ROLLBACK" "Restoring stable system"
 
+
     echo "   → Restoring stable baseline..."
+    if [ -f /tmp/econest_8002.pid ]; then kill -9 $(cat /tmp/econest_8002.pid) 2>/dev/null || true; fi
     sleep 1
 
     send_update "ROLLBACK" "Rollback complete"
@@ -86,7 +90,9 @@ elif [ "$TRAFFIC" -eq 100 ]; then
 
     send_update "FINAL_PROGRESS" "100% traffic routing"
 
+
     echo "   → Updating load balancer: 100% canary"
+    if [ -f /tmp/econest_8001.pid ]; then kill -9 $(cat /tmp/econest_8001.pid) 2>/dev/null || true; fi
     sleep 1
 
     send_update "FINAL_DONE" "Deployment complete"
