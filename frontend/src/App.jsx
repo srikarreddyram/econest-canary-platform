@@ -223,7 +223,7 @@ function App() {
       {/* Terminal & History */}
       <div className="grid grid-cols-2 gap-6">
         <div className="glass-panel">
-          <div className="text-text-secondary uppercase tracking-widest text-sm font-semibold mb-4">Jenkins Live Console</div>
+          <div className="text-text-secondary uppercase tracking-widest text-sm font-semibold mb-4">Cloud & Local Orchestrator Console</div>
           <div className="bg-black rounded-lg p-4 border border-gray-800 font-mono text-success text-sm h-64 overflow-y-auto">
             <pre className="whitespace-pre-wrap break-words">{consoleLog}</pre>
             <div ref={consoleEndRef} />

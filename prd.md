@@ -34,7 +34,7 @@ Existing canary tooling (Kubernetes Argo Rollouts, AWS CodeDeploy, Spinnaker) re
 2.2  Target Users
 User	Context	Pain Point
 Backend Developer	Shipping Flask/Node APIs	No safe way to test new builds under real traffic
-DevOps Engineer	Managing Jenkins pipelines	Manual rollback is slow and error-prone
+DevOps Engineer	Managing Orchestrator pipelines	Manual rollback is slow and error-prone
 Tech Lead	Overseeing deployment governance	No immutable audit trail of deployment decisions
 Platform Team	Supporting multiple services	Each service has its own ad-hoc deployment process
 
@@ -51,8 +51,8 @@ Platform Team	Supporting multiple services	Each service has its own ad-hoc deplo
 •	Two-process canary deployment with isolated working directories
 •	Python stdlib HTTP traffic proxy with configurable weight file
 •	MLflow risk scoring engine reading live proxy telemetry (latency P95, error rate)
-•	Jenkins Declarative Pipeline with 10 named stages
-•	Flask REST API bridging Jenkins and the dashboard
+•	Native Python Orchestrator with 10 named stages
+•	Flask REST API bridging Orchestrator and the dashboard
 •	Real-time SPA dashboard: pipeline rail, traffic gauge, MLflow metrics, deployment history, console, rollback
 •	Automatic rollback on risk threshold breach or pipeline failure
 •	In-memory deployment audit log per API session
@@ -80,7 +80,7 @@ FR-01	System SHALL accept any public GitHub HTTPS URL as the REPO_URL pipeline p
 FR-02	System SHALL clone with --depth 1 to minimise clone time	MUST	Performance
 FR-03	System SHALL create two independent clone directories: /tmp/econest_stable_app and /tmp/econest_canary_app	MUST	Architecture
 FR-04	System SHALL fail fast with a clear error if the repo is not clonable	MUST	QA
-FR-05	System SHOULD support private repos via Jenkins credential store HTTPS credentials	SHOULD	Roadmap
+FR-05	System SHOULD support private repos via Orchestrator credential store HTTPS credentials	SHOULD	Roadmap
 
 4.2  Runtime Detection
 ID	Requirement	Priority	Source
@@ -112,7 +112,7 @@ FR-33	All metrics, decisions, and abort reasons SHALL be logged to MLflow at ./m
 FR-34	evaluate_risk.py SHALL exit with code 1 on ABORT and code 0 on PROMOTE	MUST	Architecture
 
 4.5  Pipeline Stages
-The Jenkins Declarative Pipeline defines 10 stages executed in the following sequence:
+The Native Python Orchestrator defines 10 stages executed in the following sequence:
 #	Stage	Action	Failure Behaviour
 0	Checkout	deleteDir(), git clone --depth 1 from REPO_URL, chmod +x scripts	Pipeline aborts — no deployment starts
 1	Rollback Gate	Fires only if FORCE_ROLLBACK=true. Runs deploy_script.sh 0, then error() to mark FAILED	N/A — this IS the failure path
@@ -139,11 +139,11 @@ Deploy	🚀 Deploy	Repo URL input, Deploy button, 7-bubble pipeline rail, live t
 Monitor	📡 Monitor	Pipeline rail and traffic/build cards in a dedicated view for demo walkthrough
 MLflow Metrics	📊 MLflow Metrics	Latency P95 gauge, error rate gauge, risk decision badge, run history table (last 8 runs)
 History	🗂 History	Deployment history table: status dot, repo URL, triggered timestamp
-Console	🖥 Console	Monospace scrollable Jenkins console output, last 200 lines
+Console	🖥 Console	Monospace scrollable Orchestrator console output, last 200 lines
 Rollback	⚠️ Rollback	Warning banner, Rollback Now button, explanation of what rollback does and its audit trail impact
 
 6.2  Stage Map
-The pipeline rail renders 7 bubbles mapped to Jenkins stage names via the STAGE_MAP constant. Stage key values must match Jenkins stage names exactly, including case and spacing.
+The pipeline rail renders 7 bubbles mapped to Orchestrator stage names via the STAGE_MAP constant. Stage key values must match Orchestrator stage names exactly, including case and spacing.
 STAGE_MAP = [
   { name: 'Checkout',      icon: '📦',  key: 'Checkout'              },
   { name: 'Install Deps',  icon: '🔧',  key: 'Install Dependencies'  },
@@ -172,7 +172,7 @@ NF-04	Reliability	Rollback SHALL complete and proxy weight SHALL reach 0 within	
 NF-05	Reliability	Proxy SHALL return 502 on target app downtime rather than hanging (timeout)	10 s
 NF-06	Observability	Every PROMOTE/ABORT decision SHALL be traceable in MLflow with timestamp, metrics, and reason	100%
 NF-07	Compatibility	launch_app.sh SHALL work on macOS 12+ with bash 3.2+	bash 3.2+
-NF-08	Security	Jenkins API token SHALL NOT be committed to VCS — injected via env or Jenkins credential store	No secrets
+NF-08	Security	GitHub Personal Access Token SHALL NOT be committed to VCS — injected via env or Orchestrator credential store	No secrets
 NF-09	Maintainability	Risk thresholds SHALL be configurable via two constants at the top of evaluate_risk.py	2 constants
 
 9. Known Limitations & Technical Debt
@@ -181,7 +181,7 @@ KL-01	_history list in Api.py is lost when the process restarts	No persistent au
 KL-02	MLflow runs accumulate in ./mlruns indefinitely — no retention policy	Performance degrades after many builds	P2
 KL-03	Traffic splitting is probabilistic per-request, not session-sticky	Same user may see different versions within one session	P2
 KL-04	Flask FLASK_RUN_PORT env var may be ignored by apps with hardcoded port config	App launches but listens on wrong port — proxy gets connection refused	P1
-KL-05	Jenkins API token stored in plaintext in Api.py	Token exposure if repo is public or token is reused	P1
+KL-05	GitHub Personal Access Token stored in plaintext in Api.py	Token exposure if repo is public or token is reused	P1
 KL-06	Java and compiled language repos are not supported — no build step before launch	Pipeline falls back to health wrapper; target app does not run	P3
 KL-07	http.server.ThreadingHTTPServer can block on slow clients at high concurrency	Latency spikes above 50 req/s — replace with gunicorn or aiohttp for production	P3
  
@@ -191,7 +191,7 @@ Tasks ordered by priority for the Antigravity development team. P1 items must be
 
 P1 — Critical
 ID	Description	File(s)	Acceptance Criteria
-T-01	Move Jenkins credentials to environment variables. Set JENKINS_USER and JENKINS_TOKEN via macOS env or Jenkins global env vars. Remove hardcoded values from Api.py.	Api.py	No credentials in source. API starts using env vars only.
+T-01	Move Orchestrator credentials to environment variables. Set JENKINS_USER and JENKINS_TOKEN via macOS env or Orchestrator global env vars. Remove hardcoded values from Api.py.	Api.py	No credentials in source. API starts using env vars only.
 T-02	Fix Flask port binding in launch_app.sh. Use gunicorn as launcher for reliable port control: gunicorn -b 0.0.0.0:$PORT <module>:app. Auto-detect the app module name from the Flask entry point file.	launch_app.sh	Flask app reliably responds on specified port with any repo.
 T-03	Replace in-memory _history with SQLite persistence. Table: deployments(id, repo_url, triggered_at, status, build_number). Write on trigger, update on status poll.	Api.py	Deployment history survives Api.py restart.
 
@@ -199,7 +199,7 @@ P2 — High Value
 ID	Description	File(s)	Acceptance Criteria
 T-04	Pass PORT env var to Node.js apps. Node reads process.env.PORT — pass PORT=8001 or PORT=8002 to npm start command in launch_app.sh.	launch_app.sh	Node.js app responds on the correct port.
 T-05	Add MLflow run retention: keep only the last 50 runs in ./mlruns. Run cleanup at the start of each Evaluate Risk stage.	evaluate_risk.py	./mlruns stays under 50 runs after 100 builds.
-T-06	Make risk thresholds configurable via Jenkins parameters. Add LATENCY_THRESHOLD_MS and ERROR_RATE_THRESHOLD pipeline params that evaluate_risk.py reads from environment.	Jenkinsfile, evaluate_risk.py	Thresholds settable per-build with no code changes.
+T-06	Make risk thresholds configurable via API parameters. Add LATENCY_THRESHOLD_MS and ERROR_RATE_THRESHOLD pipeline params that evaluate_risk.py reads from environment.	Orchestratorfile, evaluate_risk.py	Thresholds settable per-build with no code changes.
 T-07	Implement session-sticky canary routing option. Store IP → target mapping in proxy dict with 10-minute TTL. Enable via a separate sticky weight file.	traffic_proxy.py	Same IP consistently routes to same target within TTL window.
 
 P3 — Future Sprint
@@ -215,16 +215,16 @@ P3 — Future Sprint
 •	macOS 12 (Monterey) or later
 •	Python 3.9+ available as python3 in PATH
 •	Node.js 18+ and npm 9+ (for Node app support)
-•	Jenkins LTS on port 8080, pipeline job named Adaptive-Canary-Core
-•	Jenkins API token for user tejsr (rotates every 30 days)
+•	Orchestrator LTS on port 8080, pipeline job named Adaptive-Canary-Core
+•	GitHub Personal Access Token for user tejsr (rotates every 30 days)
 •	pip3 available globally, not only inside venv
 
-11.2  Jenkins Job Configuration
+11.2  Cloud Setup
 •	Type: Pipeline
 •	Pipeline definition: Pipeline script from SCM
 •	SCM: Git — https://github.com/srikarreddyram/econest-canary-platform.git
-•	Branch: */main — Script Path: Jenkinsfile
-•	Build with Parameters: auto-detected from parameters{} block in Jenkinsfile
+•	Branch: */main — Script Path: Orchestratorfile
+•	Build with Parameters: auto-detected from parameters{} block in Orchestratorfile
 
 11.3  Start Sequence
 # 1. Enter repo and activate venv
@@ -272,10 +272,10 @@ Canary Instance	The new version under test. Runs on port 8002. Receives weight% 
 Traffic Proxy	A lightweight Python HTTP server (traffic_proxy.py) on port 9000 that probabilistically forwards requests to stable or canary based on the weight file.
 Risk Score	The output of evaluate_risk.py. Either PROMOTE (exit 0) or ABORT (exit 1), based on canary latency P95 and error rate versus configured thresholds.
 MLflow	An open-source platform for tracking ML and operational metrics. Used to log deployment decisions, latency, error rate, and abort reasons with immutable timestamps.
-FORCE_ROLLBACK	A Jenkins boolean parameter that, when true, causes the pipeline to skip all stages except Rollback Gate and immediately route 0% traffic to the canary.
+FORCE_ROLLBACK	A Orchestrator boolean parameter that, when true, causes the pipeline to skip all stages except Rollback Gate and immediately route 0% traffic to the canary.
 launch_app.sh	The universal application launcher. Auto-detects the runtime type of a cloned repository and starts the application on a specified port.
 Latency P95	The 95th percentile response time — the latency value below which 95% of requests complete. A better production health indicator than mean latency.
-wfapi	Jenkins Workflow API — the REST endpoint (/wfapi/describe) that returns stage-level status for Declarative Pipelines. Used by Api.py to populate the dashboard pipeline rail.
+wfapi	Orchestrator Pipeline Status — the REST endpoint (/wfapi/describe) that returns stage-level status for Declarative Pipelines. Used by Api.py to populate the dashboard pipeline rail.
 PID File	A file containing the process ID of a running background process. Used by deploy_script.sh and launch_app.sh to kill specific processes cleanly on rollback.
 
 
@@ -302,3 +302,8 @@ PID File	A file containing the process ID of a running background process. Used 
 16. React & Tailwind Migration
 - **Frontend Arch:** The dashboard is now a discrete Single Page Application built with React and Vite.
 - **Styling:** Vanilla CSS was replaced with TailwindCSS utility classes.
+
+
+17. Cloud CI/CD Migration
+- **Orchestrator Deprecation:** Orchestrator was fully removed in favor of a hybrid cloud model.
+- **GitHub Actions:** Cloud CI handles the 'Build & Test' phase virtually, while a native Python orchestrator handles the physical Canary routing locally.

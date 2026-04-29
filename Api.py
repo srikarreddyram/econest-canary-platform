@@ -1,37 +1,48 @@
 """
-Econest Canary Platform — Backend API (V3 with WebSockets)
-Bridges the React dashboard to Jenkins + MLflow local tracking.
+Econest Canary Platform — Backend API (V4 - Cloud Hybrid Orchestrator)
+Bridges the React dashboard to GitHub Actions + Local Native Orchestrator.
 Run with: python3 Api.py
-Listens on: http://localhost:5001
 """
 
 from flask import Flask, jsonify, request
 from flask_cors import CORS
 from flask_socketio import SocketIO
-import requests
 import os
+from dotenv import load_dotenv
+load_dotenv()
 import glob
 import time
 from datetime import datetime
 import sqlite3
 import threading
 
+import orchestrator
+
 app = Flask(__name__)
 CORS(app)
 socketio = SocketIO(app, cors_allowed_origins="*")
 
-# ── Config ───────────────────────────────────────────────────────────────────
-JENKINS_URL = "http://localhost:8080"
-JOB_NAME = "Adaptive-Canary-Core"
-
-USERNAME = os.environ.get("JENKINS_USER", "tejsr")
-API_TOKEN = os.environ.get("JENKINS_TOKEN", "")
-
 MLRUNS_PATHS = [
-    "/Users/tejsr/.jenkins/workspace/Adaptive-Canary-Core/mlruns",
     os.path.expanduser("~/mlruns"),
     "./mlruns",
 ]
+
+pipeline_state = {
+    "building": False,
+    "result": None,
+    "number": 0,
+    "stages": [
+        {"name": "Checkout", "status": "PENDING"},
+        {"name": "Install Dependencies", "status": "PENDING"},
+        {"name": "Verify DB Structure", "status": "PENDING"},
+        {"name": "Canary 10%", "status": "PENDING"},
+        {"name": "Evaluate Risk", "status": "PENDING"},
+        {"name": "Promote 50%", "status": "PENDING"},
+        {"name": "Promote 100%", "status": "PENDING"}
+    ]
+}
+
+console_logs = []
 
 # ── DB Setup ──────────────────────────────────────────────────────────────────
 def init_db():
@@ -68,34 +79,6 @@ def get_deployments():
     conn.close()
     return [{"id": r["id"], "repo_url": r["repo_url"], "triggered": r["triggered"], "status": r["status"]} for r in rows]
 
-# ── Jenkins Auth Helpers ──────────────────────────────────────────────────────
-def get_crumb():
-    try:
-        r = requests.get(
-            f"{JENKINS_URL}/crumbIssuer/api/json",
-            auth=(USERNAME, API_TOKEN),
-            timeout=5
-        )
-        if r.status_code == 200:
-            data = r.json()
-            return {data["crumbRequestField"]: data["crumb"]}
-    except Exception:
-        pass
-    return {}
-
-def jenkins_request(method, url, **kwargs):
-    headers = kwargs.pop("headers", {})
-    headers.update(get_crumb())
-
-    return requests.request(
-        method,
-        url,
-        auth=(USERNAME, API_TOKEN),
-        headers=headers,
-        timeout=10,
-        **kwargs
-    )
-
 # ── MLflow ────────────────────────────────────────────────────────────────────
 def read_mlflow_metrics():
     runs = []
@@ -129,35 +112,43 @@ def read_mlflow_metrics():
                         except:
                             pass
 
-                p_dir = os.path.join(run_dir, "params")
-                if os.path.isdir(p_dir):
-                    for pf in glob.glob(f"{p_dir}/*"):
-                        try:
-                            with open(pf) as f:
-                                run["params"][os.path.basename(pf)] = f.read().strip()
-                        except:
-                            pass
-
                 if run["metrics"]:
                     runs.append(run)
-
         if runs:
             break
-
     return runs
 
-# ── Jenkins Helpers ───────────────────────────────────────────────────────────
-def jenkins_stages():
-    try:
-        r = jenkins_request(
-            "GET",
-            f"{JENKINS_URL}/job/{JOB_NAME}/lastBuild/wfapi/describe"
-        )
-        if r.status_code == 200:
-            return r.json().get("stages", [])
-    except:
-        pass
-    return []
+# ── Pipeline Callbacks ────────────────────────────────────────────────────────
+def emit_log(msg):
+    print(msg)
+    console_logs.append(msg)
+    if len(console_logs) > 200:
+        console_logs.pop(0)
+    socketio.emit('console', {"log": "\n".join(console_logs)})
+
+def update_stage(stage_name, status):
+    for s in pipeline_state["stages"]:
+        if s["name"] == stage_name:
+            s["status"] = status
+    socketio.emit('status', pipeline_state)
+
+def pipeline_thread(repo_url, entry_id):
+    pipeline_state["building"] = True
+    pipeline_state["result"] = None
+    for s in pipeline_state["stages"]:
+        s["status"] = "PENDING"
+    
+    socketio.emit('status', pipeline_state)
+    socketio.emit('refresh', {'type': 'history'})
+    
+    success = orchestrator.run_pipeline(repo_url, emit_log, update_stage)
+    
+    pipeline_state["building"] = False
+    pipeline_state["result"] = "SUCCESS" if success else "FAILED"
+    update_deployment_status(entry_id, "success" if success else "failed")
+    
+    socketio.emit('status', pipeline_state)
+    socketio.emit('refresh', {'type': 'history'})
 
 # ── Routes ───────────────────────────────────────────────────────────────────
 @app.route("/api/health")
@@ -166,70 +157,25 @@ def health():
 
 @app.route("/api/deploy", methods=["POST"])
 def deploy():
+    if pipeline_state["building"]:
+        return jsonify({"success": False, "message": "Pipeline already running"}), 400
+        
     body = request.get_json(silent=True) or {}
     repo_url = body.get("repo_url", "").strip() or \
         "https://github.com/srikarreddyram/econest-canary-platform.git"
 
-    try:
-        r = jenkins_request(
-            "POST",
-            f"{JENKINS_URL}/job/{JOB_NAME}/buildWithParameters",
-            params={"REPO_URL": repo_url}
-        )
+    pipeline_state["number"] += 1
+    console_logs.clear()
+    emit_log(f"Received deployment request for {repo_url}")
+    
+    entry_id = str(int(time.time()))
+    triggered = datetime.utcnow().isoformat()
+    insert_deployment(entry_id, repo_url, triggered, "running")
+    
+    # Start Orchestrator Thread
+    threading.Thread(target=pipeline_thread, args=(repo_url, entry_id), daemon=True).start()
 
-        if r.status_code in (200, 201):
-            entry_id = str(int(time.time()))
-            triggered = datetime.utcnow().isoformat()
-            insert_deployment(entry_id, repo_url, triggered, "running")
-            socketio.emit('refresh', {'type': 'history'})
-            return jsonify({"success": True})
-
-        return jsonify({"success": False, "message": f"Jenkins {r.status_code}"}), 500
-
-    except Exception as e:
-        return jsonify({"success": False, "message": str(e)}), 500
-
-@app.route("/api/status")
-def status():
-    # Still available for manual polling if needed, but background thread emits via WS
-    return jsonify(get_status_data())
-
-def get_status_data():
-    try:
-        r = jenkins_request(
-            "GET",
-            f"{JENKINS_URL}/job/{JOB_NAME}/lastBuild/api/json"
-        )
-
-        if r.status_code == 200:
-            d = r.json()
-            result = d.get("result")
-            building = d.get("building", False)
-
-            deps = get_deployments()
-            if deps:
-                latest_id = deps[0]["id"]
-                new_status = (
-                    "running" if building else
-                    "success" if result == "SUCCESS" else "failed"
-                )
-                if deps[0]["status"] != new_status:
-                    update_deployment_status(latest_id, new_status)
-                    socketio.emit('refresh', {'type': 'history'})
-
-            return {
-                "building": building,
-                "result": result,
-                "number": d.get("number"),
-                "stages": jenkins_stages(),
-            }
-    except Exception:
-        pass
-    return None
-
-@app.route("/api/metrics")
-def metrics():
-    return jsonify(read_mlflow_metrics())
+    return jsonify({"success": True})
 
 @app.route("/api/history")
 def history():
@@ -237,39 +183,16 @@ def history():
 
 @app.route("/api/rollback", methods=["POST"])
 def rollback():
-    try:
-        jenkins_request(
-            "POST",
-            f"{JENKINS_URL}/job/{JOB_NAME}/buildWithParameters",
-            params={"FORCE_ROLLBACK": "true"}
-        )
-        socketio.emit('refresh', {'type': 'history'})
-        return jsonify({"success": True})
-    except Exception as e:
-        return jsonify({"success": False, "message": str(e)})
-
-@app.route("/api/console")
-def console():
-    try:
-        r = jenkins_request(
-            "GET",
-            f"{JENKINS_URL}/job/{JOB_NAME}/lastBuild/consoleText"
-        )
-        if r.status_code == 200:
-            lines = r.text.splitlines()
-            return jsonify({"log": "\n".join(lines[-200:])})
-    except:
-        pass
-    return jsonify({"log": ""})
+    with open(orchestrator.ABORT_FLAG, "w") as f:
+        f.write("1")
+    emit_log("🛑 Manual Rollback Triggered!")
+    return jsonify({"success": True})
 
 @app.route("/api/update", methods=["POST"])
 def update():
-    """Receive live deployment stage updates from deploy_script.sh"""
     data = request.get_json(silent=True) or {}
-    print(f"📡 Stage update: {data.get('stage')} → {data.get('message')}")
     socketio.emit('stage_update', data)
     return jsonify({"status": "received"})
-
 
 CHAOS_FILE = '/tmp/econest_chaos_mode'
 
@@ -297,52 +220,38 @@ def chaos_status():
 
 @app.route("/api/webhook/github", methods=["POST"])
 def github_webhook():
+    if pipeline_state["building"]:
+        return jsonify({"status": "ignored", "message": "already running"})
+        
     payload = request.get_json(silent=True) or {}
     if payload.get("ref") == "refs/heads/main":
         repo_url = payload.get("repository", {}).get("clone_url")
         if repo_url:
-            try:
-                r = jenkins_request(
-                    "POST",
-                    f"{JENKINS_URL}/job/{JOB_NAME}/buildWithParameters",
-                    params={"REPO_URL": repo_url}
-                )
-                if r.status_code in (200, 201):
-                    entry_id = str(int(time.time()))
-                    triggered = datetime.utcnow().isoformat()
-                    insert_deployment(entry_id, repo_url, triggered, "running")
-                    socketio.emit('refresh', {'type': 'history'})
-                    return jsonify({"success": True, "message": "Triggered via Webhook"})
-            except Exception as e:
-                return jsonify({"success": False, "message": str(e)}), 500
+            pipeline_state["number"] += 1
+            console_logs.clear()
+            entry_id = str(int(time.time()))
+            triggered = datetime.utcnow().isoformat()
+            insert_deployment(entry_id, repo_url, triggered, "running")
+            threading.Thread(target=pipeline_thread, args=(repo_url, entry_id), daemon=True).start()
+            return jsonify({"success": True, "message": "Triggered via Webhook"})
     return jsonify({"status": "ignored"})
 
 # ── Background Polling for WebSocket Emit ─────────────────────────────────────
 def background_poll():
     while True:
         socketio.sleep(3)
-        status_data = get_status_data()
-        if status_data:
-            socketio.emit('status', status_data)
-        
+        # Emit state and metrics continuously
+        socketio.emit('status', pipeline_state)
         metrics_data = read_mlflow_metrics()
         if metrics_data:
             socketio.emit('metrics', metrics_data)
 
-        try:
-            r = jenkins_request("GET", f"{JENKINS_URL}/job/{JOB_NAME}/lastBuild/consoleText")
-            if r.status_code == 200:
-                lines = r.text.splitlines()
-                socketio.emit('console', {"log": "\n".join(lines[-200:])})
-        except:
-            pass
-
 @socketio.on('connect')
 def handle_connect():
-    print("Client connected via WebSocket")
+    socketio.emit('status', pipeline_state)
+    socketio.emit('console', {"log": "\n".join(console_logs)})
 
-# ── Entry ─────────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    print("🚀 Econest Canary API running on http://localhost:5001")
+    print("🚀 Econest Native API & Orchestrator running on http://localhost:5001")
     socketio.start_background_task(background_poll)
     socketio.run(app, port=5001, debug=False, allow_unsafe_werkzeug=True)

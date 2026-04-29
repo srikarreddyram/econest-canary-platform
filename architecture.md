@@ -131,3 +131,7 @@ In Version 3, the architecture implements Docker isolation for all deployed appl
 
 ## 9. Frontend Architecture
 The frontend is a distinct Node.js process running a Vite React application. It connects to the Python API over HTTP for actions, and WebSockets for real-time telemetry streaming.
+
+
+## 10. Hybrid Orchestration Model
+Instead of Jenkins, the platform triggers GitHub Actions via the REST API for cloud checks, and uses `orchestrator.py` to synchronously run the deploy and risk scripts locally via Python subprocesses.

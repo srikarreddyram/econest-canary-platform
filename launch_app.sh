@@ -4,6 +4,13 @@
 PORT=${1:-8001}
 TARGET_DIR=${2:-/tmp/econest_stable_app}
 
+echo "Cleaning up any ghost processes on port $PORT..."
+if [ -f "/tmp/econest_${PORT}.pid" ]; then
+    kill -9 $(cat "/tmp/econest_${PORT}.pid") 2>/dev/null || true
+    rm -f "/tmp/econest_${PORT}.pid"
+fi
+lsof -ti :${PORT} | xargs kill -9 2>/dev/null || true
+
 echo "Launching application in $TARGET_DIR on port $PORT"
 cd "$TARGET_DIR" || exit 1
 
