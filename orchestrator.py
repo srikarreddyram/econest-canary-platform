@@ -2,6 +2,7 @@ import os
 import subprocess
 import time
 import requests
+import threading
 
 ABORT_FLAG = "/tmp/econest_abort_pipeline"
 
@@ -16,6 +17,25 @@ def check_abort():
     if os.path.exists(ABORT_FLAG):
         return True
     return False
+
+def load_worker():
+    start = time.time()
+    while time.time() - start < 6:
+        if check_abort(): return
+        try:
+            requests.get("http://localhost:9000/", timeout=1)
+        except:
+            pass
+        time.sleep(0.05)
+
+def burst_load(emit_log_cb):
+    emit_log_cb("🚀 Injecting Automated Load Burst (simulating traffic)...")
+    threads = []
+    for _ in range(10):
+        t = threading.Thread(target=load_worker)
+        t.start()
+        threads.append(t)
+    return threads
 
 def trigger_github_action(repo_url, github_token, emit_log_cb):
     if not github_token:
@@ -107,10 +127,14 @@ def run_pipeline(repo_url, emit_log_cb, update_stage_cb):
     update_stage_cb('Canary 10%', 'IN_PROGRESS')
     stream_cmd("bash deploy_script.sh 10", emit_log_cb)
     
-    emit_log_cb("Running Canary analysis for 5 seconds...")
-    for _ in range(5):
+    emit_log_cb("Running Canary analysis for 6 seconds...")
+    threads = burst_load(emit_log_cb)
+    for _ in range(6):
         if check_abort(): return False
         time.sleep(1)
+        
+    for t in threads:
+        t.join()
         
     update_stage_cb('Canary 10%', 'SUCCESS')
 
